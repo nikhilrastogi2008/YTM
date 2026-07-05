@@ -146,26 +146,6 @@ function priceAtYield(coupon, remMat, yPct){
   return Math.round(pv*100)/100;
 }
 function currentPrice(bond){ return priceAtYield(bond.coupon, bond.remMat, S.baseRate); }
-
-/* Clean/Dirty/Accrued pricing — `nRemaining` is the number of full annual coupons
-   left as of the LAST coupon date (i.e. the start of the current period), and
-   `frac` is how far into that period we are (0 = just after a coupon, →1 = just
-   before the next one). At frac=0 this collapses exactly to priceAtYield(). */
-function dirtyPriceAt(coupon, nRemaining, yPct, frac){
-  const n = Math.max(Math.round(nRemaining),0);
-  if(n<=0) return 1000;
-  const y = yPct/100;
-  const c = coupon/100*1000;
-  let pv = 0;
-  for(let k=1;k<=n;k++){
-    const cf = k<n ? c : c+1000;
-    pv += cf/Math.pow(1+y, k-frac);
-  }
-  return pv;
-}
-function accruedInterestAt(coupon, frac){ return coupon/100*1000*frac; }
-function cleanFromDirty(dirty, coupon, frac){ return dirty - accruedInterestAt(coupon, frac); }
-
 const fmt = n => n.toLocaleString('en-US',{maximumFractionDigits:0});
 const fmt2 = n => n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
 const pct = n => (n>=0?'+':'')+n.toFixed(2)+'%';
@@ -191,7 +171,6 @@ function newGame(cfg){
     history:[{round:0, value:cfg.cash}],
     tradeQty:{}, screen:'game',
     labBondId:'MED', labYTM:5.00,
-    cdBondId:'MED', cdYTM:5.00, cdMonths:6,
   };
   bonds.forEach(b=>S.tradeQty[b.id]=1);
   S.priceGuess = {};
@@ -338,40 +317,6 @@ function priceYieldCurveSVG(coupon, remMat, markYTM){
     <text x="${W/2}" y="${H-6}" fill="#565D6B" font-size="9" text-anchor="middle">Yield to Maturity →</text>
   </svg>`;
 }
-function cleanDirtyChartSVG(coupon, n0, yPct, markFrac){
-  const W=560,H=190,pad={l:48,r:14,t:14,b:24};
-  const pts=[]; // {x, dirty, clean} sampled across 2 coupon periods
-  const steps=48;
-  for(let p=0;p<2 && n0-p>0;p++){
-    for(let i=0;i<=steps;i++){
-      const f = i/steps;
-      const x = p+f;
-      const dirty = dirtyPriceAt(coupon, n0-p, yPct, f);
-      const clean = cleanFromDirty(dirty, coupon, f);
-      pts.push({x, dirty, clean});
-    }
-  }
-  const allY = pts.flatMap(p=>[p.dirty,p.clean]);
-  const yMin=Math.min(...allY)*0.985, yMax=Math.max(...allY)*1.015;
-  const xMax = Math.min(2, n0);
-  const xr = t => pad.l + (t/xMax)*(W-pad.l-pad.r);
-  const yr = v => H-pad.b - ((v-yMin)/(yMax-yMin))*(H-pad.t-pad.b);
-  const dirtyLine = pts.map(p=>`${xr(p.x)},${yr(p.dirty)}`).join(' ');
-  const cleanLine = pts.map(p=>`${xr(p.x)},${yr(p.clean)}`).join(' ');
-  const markDirty = dirtyPriceAt(coupon, n0, yPct, markFrac);
-  const markClean = cleanFromDirty(markDirty, coupon, markFrac);
-  const grid=[]; const gStep = Math.max(50, Math.round((yMax-yMin)/4/50)*50);
-  for(let g=Math.ceil(yMin/gStep)*gStep; g<=yMax; g+=gStep){ grid.push(`<line x1="${pad.l}" y1="${yr(g)}" x2="${W-pad.r}" y2="${yr(g)}" stroke="#1A1E27"/><text x="2" y="${yr(g)+3}" fill="#565D6B" font-size="8">$${fmt(g)}</text>`); }
-  const couponLines=[]; for(let c=0;c<=xMax;c++){ couponLines.push(`<line x1="${xr(c)}" y1="${pad.t}" x2="${xr(c)}" y2="${H-pad.b}" stroke="#2A303C" stroke-dasharray="2 3"/><text x="${xr(c)}" y="${H-6}" fill="#565D6B" font-size="8.5" text-anchor="middle">${c===0?'coupon paid':'coupon'}</text>`); }
-  return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}">${grid.join('')}${couponLines.join('')}
-    <polyline points="${dirtyLine}" fill="none" stroke="#F0A93C" stroke-width="2"/>
-    <polyline points="${cleanLine}" fill="none" stroke="#2DD4BF" stroke-width="2"/>
-    <circle cx="${xr(markFrac)}" cy="${yr(markDirty)}" r="4.5" fill="#F0A93C" stroke="#0A0C10" stroke-width="1.5"/>
-    <circle cx="${xr(markFrac)}" cy="${yr(markClean)}" r="4.5" fill="#2DD4BF" stroke="#0A0C10" stroke-width="1.5"/>
-    <text x="${W-14}" y="14" fill="#F0A93C" font-size="9" text-anchor="end">● Dirty Price (what you pay)</text>
-    <text x="${W-14}" y="26" fill="#2DD4BF" font-size="9" text-anchor="end">● Clean Price (what's quoted)</text>
-  </svg>`;
-}
 function portfolioChartSVG(){
   const W=560,H=160,pad={l:48,r:14,t:14,b:22};
   const vals = S.history.map(h=>h.value).concat([S.initialCash]);
@@ -494,46 +439,6 @@ function labPanel(){
   </div>`;
 }
 
-function cleanDirtyPanel(){
-  const b = BOND_SEED.find(x=>x.id===S.cdBondId);
-  const frac = S.cdMonths/12;
-  const dirty = dirtyPriceAt(b.coupon, b.mat, S.cdYTM, frac);
-  const accrued = accruedInterestAt(b.coupon, frac);
-  const clean = dirty - accrued;
-  return `
-  <div class="panel">
-    <h2>🩸 Clean vs. Dirty Price <span class="helper">— another sandbox, separate from the trading rounds</span></h2>
-    <p class="desc">Every price you've seen so far in this tool has been a <b style="color:var(--text)">clean price</b> — quoted exactly on a coupon date, with no interest owed to anyone. But bonds trade every day, not just on coupon dates. Buy one between coupons and you owe the seller the interest they've already earned but haven't been paid yet — that's <b style="color:var(--text)">accrued interest</b>. What you actually wire on settlement day is the <b style="color:var(--text)">dirty price</b>: Clean Price + Accrued Interest.</p>
-    <div class="lab-grid">
-      <div>
-        <div class="field">
-          <label>Bond</label>
-          <select onchange="S.cdBondId=this.value;render()">
-            ${BOND_SEED.map(x=>`<option value="${x.id}" ${x.id===S.cdBondId?'selected':''}>${x.name} (${x.coupon.toFixed(2)}% coupon, ${x.mat}y)</option>`).join('')}
-          </select>
-        </div>
-        <div class="field">
-          <label>Assumed Yield to Maturity: <span class="mono" style="color:var(--amber)">${S.cdYTM.toFixed(2)}%</span></label>
-          <input type="range" min="0.5" max="12" step="0.25" value="${S.cdYTM}" oninput="S.cdYTM=parseFloat(this.value);render()">
-        </div>
-        <div class="field">
-          <label>Months Since Last Coupon: <span class="mono" style="color:var(--amber)">${S.cdMonths} of 12</span></label>
-          <input type="range" min="0" max="11" step="1" value="${S.cdMonths}" oninput="S.cdMonths=parseInt(this.value);render()">
-        </div>
-        ${cleanDirtyChartSVG(b.coupon, b.mat, S.cdYTM, frac)}
-      </div>
-      <div>
-        <div class="grid2" style="grid-template-columns:1fr;gap:10px;">
-          <div class="kv"><span class="k">Clean Price <span class="helper">(quoted)</span></span><span class="v" style="color:var(--teal)">$${fmt2(clean)}</span></div>
-          <div class="kv"><span class="k">Accrued Interest <span class="helper">(coupon × ${S.cdMonths}/12)</span></span><span class="v">$${fmt2(accrued)}</span></div>
-          <div class="kv" style="border-top:2px solid var(--border);"><span class="k" style="font-weight:700;color:var(--text)">Dirty Price <span class="helper">(what you pay)</span></span><span class="v" style="color:var(--amber);font-size:16px;">$${fmt2(dirty)}</span></div>
-        </div>
-        <p class="desc" style="margin-top:14px;">Notice the shape in the chart: the <span style="color:var(--amber)">dirty price</span> climbs steadily as interest accrues, then drops sharply right when a coupon is paid — that whole coupon amount just left the bond and landed in the holder's pocket. The <span style="color:var(--teal)">clean price</span> moves far more smoothly through the same period, because it's already stripped the accrued-interest sawtooth out. This is exactly why bond quotes in the market are clean prices — it lets you compare bonds on their actual value, not on how many days it's been since the last coupon.</p>
-      </div>
-    </div>
-  </div>`;
-}
-
 function bondRow(b){
   const price = currentPrice(b);
   if(b.matured){
@@ -608,8 +513,6 @@ function glossaryPanel(){
       <div class="gterm"><b>Holding Period Return (HPR)</b><span>(Coupon income + price change) ÷ purchase price, over whatever period you held it — then converted to an annualized rate so positions of different lengths are comparable. Shown two ways: coupons as idle cash, or coupons reinvested at the prevailing rate.</span></div>
       <div class="gterm"><b>Unrealized Return</b><span>A paper gain or loss on a position you still hold — it can still change before you sell.</span></div>
       <div class="gterm"><b>Realized Return</b><span>Locked in the moment you sell or the bond matures — it can no longer change.</span></div>
-      <div class="gterm"><b>Clean Price</b><span>The quoted price, stripped of any accrued interest. This is what every price in this tool has shown you.</span></div>
-      <div class="gterm"><b>Dirty Price</b><span>Clean Price + Accrued Interest — the actual cash amount that changes hands when a bond trades between coupon dates.</span></div>
     </div>
   </div>`;
 }
@@ -633,8 +536,6 @@ function gameScreen(){
   ${flashMsg? `<div class="eventcard" style="border-color:var(--red);"><span style="color:var(--red)">${flashMsg}</span></div>` : ''}
 
   ${labPanel()}
-
-  ${cleanDirtyPanel()}
 
   <div class="grid2">
     <div class="panel">
@@ -746,7 +647,6 @@ function summaryScreen(){
         <li>Which bond's price moved the most for a given rate change — the 2-year, 5-year, or 8-year? What does that tell you about maturity and price risk?</li>
         <li>Pick a position you're still holding (if any) — how would its "unrealized" return change if rates moved another 1% before you sold?</li>
         <li>If you'd simply bought and held every bond to maturity with no trading, how would your ledger look different?</li>
-        <li>In the Clean vs. Dirty Price explorer, why does the dirty price drop sharply right after a coupon date while the clean price doesn't?</li>
       </ul>
     </div>
 
