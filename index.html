@@ -113,6 +113,12 @@
 <div id="app"></div>
 
 <script>
+/* ============================== INSTRUCTOR CONFIG ==============================
+   Paste your Google Apps Script Web App URL below (ends in /exec).
+   See setup instructions provided alongside this file. Leave as-is (empty string)
+   to disable score submission — the button simply won't appear. */
+const SHEET_WEBAPP_URL = "https://script.google.com/macros/s/AKfycbxthY2hifj3M4udaQReJ__zORV8YMiTTrGmgrMnBHgLx_OgYMUTwTWgolA4rov-lYHP/exec";
+
 /* ============================== DATA ============================== */
 const BOND_SEED = [
   {id:'SHORT', name:'2-Year Note', coupon:5.00, mat:2},
@@ -167,6 +173,7 @@ function newGame(cfg){
     tradeQty:{}, screen:'game',
     labBondId:'MED', labYTM:5.00,
     quizScore:0, quizQueue:[],
+    studentName: cfg.studentName, enrollment: cfg.enrollment, scoreSubmitted:false, submitting:false,
   };
   bonds.forEach(b=>S.tradeQty[b.id]=1);
   S.priceGuess = {};
@@ -240,6 +247,31 @@ let flashMsg=null, flashType='error';
 function flash(msg, type='error'){ flashMsg=msg; flashType=type; render(); setTimeout(()=>{flashMsg=null; render();},2800); }
 
 function toggleReveal(){ S.revealPrices = !S.revealPrices; render(); }
+
+function submitScore(){
+  if(!SHEET_WEBAPP_URL){ flash('Score submission isn\'t configured for this session.'); return; }
+  S.submitting = true; render();
+  const payload = {
+    name: S.studentName,
+    enrollment: S.enrollment,
+    quizScore: S.quizScore,
+    roundsCompleted: S.round,
+    totalRounds: S.totalRounds,
+    seed: S.cfg.seed || ''
+  };
+  fetch(SHEET_WEBAPP_URL, {
+    method: 'POST',
+    mode: 'no-cors',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify(payload)
+  }).then(()=>{
+    S.submitting = false; S.scoreSubmitted = true;
+    flash('Score submitted!', 'success');
+  }).catch(()=>{
+    S.submitting = false;
+    flash('Could not reach the sheet — check your connection and try again.');
+  });
+}
 function checkPrice(id){
   const b = S.bonds.find(x=>x.id===id);
   const guess = parseFloat(S.priceGuess[id]);
@@ -384,6 +416,10 @@ function startScreen(){
 
     <div class="panel">
       <h2>Session Setup</h2>
+      <div class="row2">
+        <div class="field2"><label>Student Name (required)</label><input id="cfgName" type="text" placeholder="e.g. Nikhil Rastogi"></div>
+        <div class="field2"><label>Enrollment Number (required)</label><input id="cfgEnroll" type="text" placeholder="e.g. 2024MBA045"></div>
+      </div>
       <div class="row2">
         <div class="field2"><label>Starting Cash (USD)</label><input id="cfgCash" type="text" value="1,000"></div>
         <div class="field2"><label>Rounds (1 round = 1 year)</label>
@@ -588,7 +624,7 @@ function gameScreen(){
   return `
   ${tickerHTML()}
   <div class="topbar">
-    <div class="brand"><span class="dot"></span><h1>BOND LAB</h1><span class="sub">Year ${S.round} / ${S.totalRounds}</span></div>
+    <div class="brand"><span class="dot"></span><h1>BOND LAB</h1><span class="sub">${S.studentName} (${S.enrollment}) · Year ${S.round} / ${S.totalRounds}</span></div>
     <div class="stats">
       <div class="stat"><div class="lbl">Market Rate</div><div class="val">${S.baseRate.toFixed(2)}%</div></div>
       <div class="stat"><div class="lbl">Cash</div><div class="val">$${fmt(S.cash)}</div></div>
@@ -598,6 +634,13 @@ function gameScreen(){
   </div>
 
   ${flashMsg? `<div class="eventcard" style="border-color:${flashType==='success'?'var(--teal)':'var(--red)'};"><span style="color:${flashType==='success'?'var(--teal)':'var(--red)'}">${flashMsg}</span></div>` : ''}
+
+  ${sessionOver && S.quizQueue.length===0 && SHEET_WEBAPP_URL ? `
+  <div class="panel" style="border-color:var(--amber);">
+    <h2>📤 Submit Your Score</h2>
+    <p class="desc">Session complete for <b style="color:var(--text)">${S.studentName}</b> (<b style="color:var(--text)">${S.enrollment}</b>) — final Quiz Score: <b style="color:var(--text)">${S.quizScore}</b>. Submit it to your instructor's sheet below.</p>
+    <button class="btn primary" onclick="submitScore()" ${S.submitting||S.scoreSubmitted?'disabled':''}>${S.scoreSubmitted ? '✓ Submitted' : (S.submitting ? 'Submitting…' : 'Submit Score')}</button>
+  </div>` : ''}
 
   ${quizPanel()}
 
@@ -645,12 +688,16 @@ function gameScreen(){
 }
 
 function startGame(){
+  const studentName = document.getElementById('cfgName').value.trim();
+  const enrollment = document.getElementById('cfgEnroll').value.trim();
+  if(!studentName){ alert('Please enter your name before starting.'); return; }
+  if(!enrollment){ alert('Please enter your enrollment number before starting.'); return; }
   const cashRaw = document.getElementById('cfgCash').value.replace(/[^0-9.]/g,'');
   const cash = Math.max(1000, parseFloat(cashRaw)||1000);
   const rounds = parseInt(document.getElementById('cfgRounds').value);
   const vol = parseFloat(document.getElementById('cfgVol').value);
   const seed = document.getElementById('cfgSeed').value.trim();
-  newGame({cash, rounds, vol, seed});
+  newGame({cash, rounds, vol, seed, studentName, enrollment});
   render();
 }
 
